@@ -43,7 +43,7 @@ Small_Autonomous_Mobile_Robot/
         │   ├── nav2_params.yaml    # AMCL, planner, controller (RPP), costmap, smoother, collision monitor
         │   └── ekf.yaml            # robot_localization (CHƯA được launch nào sử dụng)
         └── launch/
-            ├── robot_base.launch.py        # 2 static TF + wheel_odometry_node + scan_restamper
+            ├── robot_base.launch.py        # 2 static TF + wheel_odometry_node (+ scan_restamper nếu use_scan_restamper:=true)
             ├── static_transforms.launch.py # Chỉ 2 static TF (bản tách riêng)
             ├── mapping.launch.py           # robot_base + slam_toolbox (trễ 5 s)
             └── navigation.launch.py        # robot_base + map_server + AMCL + toàn bộ Nav2
@@ -87,19 +87,21 @@ flowchart LR
 
 ### 0.4 Những điểm bất nhất phát hiện được khi đọc code (nên biết trước khi chạy)
 
-Đây là những chỗ trong repo **hiện tại** có thể gây lỗi. Phần 3 sẽ đối chiếu lại từng điểm.
+Đây là những chỗ trong repo có thể gây lỗi. Phần 3 sẽ đối chiếu lại từng điểm.
+Các mục 2, 3, 4 **đã được sửa** trong file launch (đánh dấu ✅); các mục còn lại vẫn cần bạn xử lý.
 
 1. **Không có URDF / `robot_state_publisher`.** Cây TF được dựng thủ công bằng `static_transform_publisher`.
    Frame gốc của robot là `base_link`, **không có `base_footprint`**, LiDAR tên là `base_laser` (không phải `laser_frame`).
-2. **`scan_restamper` gần như không hoạt động:** node này nghe `/scan_raw`, nhưng firmware lại publish thẳng lên `/scan`.
-   Vậy `/scan` mà SLAM/Nav2 nhận là dữ liệu gốc từ ESP32, còn restamper ngồi chờ một topic không ai publish.
-   Muốn dùng restamper thì phải đổi topic trong firmware thành `"scan_raw"`.
-3. **Đường dẫn map mặc định trong `navigation.launch.py` bị sai:** mặc định là `share/wheel_odometry/maps/my_map.yaml`,
-   nhưng `CMakeLists.txt` không cài thư mục `maps/`, và bản đồ lại nằm ở `ros2_ws/maps/`. **Luôn truyền `map:=...`**.
-4. **Chuỗi `cmd_vel` của Nav2 có thể bị đứt/khép vòng:** `controller_server` được remap sang `cmd_vel_nav`,
-   nhưng `velocity_smoother` **không có remap**, nên nó nghe `/cmd_vel` (đúng topic mà `collision_monitor` xuất ra).
+2. ✅ **`scan_restamper` không hoạt động (đã sửa):** node này nghe `/scan_raw`, nhưng firmware lại publish thẳng lên `/scan`,
+   nên restamper ngồi chờ một topic không ai publish. Giờ `robot_base.launch.py` có tham số `use_scan_restamper`
+   (mặc định `false`), nên restamper chỉ chạy khi bạn bật nó. Chỉ bật sau khi đã đổi topic trong firmware thành `"scan_raw"`.
+3. ✅ **Đường dẫn map mặc định trong `navigation.launch.py` bị sai (đã sửa):** trước đây mặc định là `share/wheel_odometry/maps/my_map.yaml`,
+   nhưng `CMakeLists.txt` không cài thư mục `maps/`. Giờ mặc định là `~/ros2_ws/maps/my_map.yaml`, đúng chỗ `map_saver_cli`
+   lưu bản đồ trong mục 2.3d. Dùng bản đồ khác thì truyền `map:=...`.
+4. ✅ **Chuỗi `cmd_vel` của Nav2 bị đứt/khép vòng (đã sửa):** `controller_server` được remap sang `cmd_vel_nav`,
+   nhưng `velocity_smoother` trước đây **không có remap**, nên nó nghe `/cmd_vel` (đúng topic mà `collision_monitor` xuất ra).
    Hệ quả: lệnh của controller không đi tới xe, đồng thời tạo vòng lặp `cmd_vel → smoother → collision_monitor → cmd_vel`.
-   Xem lỗi số 8 để kiểm tra và sửa.
+   Đã thêm `remappings=[('cmd_vel', 'cmd_vel_nav')]`. Xem lỗi số 8 để kiểm tra.
 5. **Đồng bộ thời gian chỉ chạy một lần lúc khởi động** (`rmw_uros_sync_session(1000)`), và kết quả bị bỏ qua.
    Nếu sync thất bại, mọi message có `stamp = 0`, dẫn đến lỗi TF extrapolation (lỗi số 3).
 6. **Firmware không có cơ chế kết nối lại agent:** mọi lỗi `RCCHECK` đều rơi vào `error_loop()` (vòng lặp vô hạn).
@@ -586,9 +588,10 @@ Dừng tất cả (`Ctrl+C`) trước khi chuyển sang Nav2: **không chạy SL
 
 ### 2.4 Bước 4: Tự hành điểm-tới-điểm bằng Nav2
 
-#### a) (Khuyến nghị) Sửa chuỗi `cmd_vel` trước khi chạy
+#### a) Chuỗi `cmd_vel` (đã sửa trong repo)
 
-Xem lỗi số 8. Tóm tắt: thêm remap cho `velocity_smoother` trong `navigation.launch.py`:
+`navigation.launch.py` đã có remap cho `velocity_smoother` (xem lỗi số 8). Nếu bạn dùng file launch của riêng mình,
+hãy chắc chắn có dòng này:
 
 ```python
 Node(
@@ -597,7 +600,7 @@ Node(
     name='velocity_smoother',
     output='screen',
     parameters=[nav2_config],
-    remappings=[('cmd_vel', 'cmd_vel_nav')],   # <-- thêm dòng này
+    remappings=[('cmd_vel', 'cmd_vel_nav')],   # <-- dòng quan trọng
 ),
 ```
 
@@ -702,7 +705,7 @@ ros2 run rqt_graph rqt_graph
 | 6 | **Bản đồ lật gương / xoay 180°** | Scan LiDAR sai chiều; LiDAR lắp ngược nhưng TF `yaw = 0` | Giữ `θ_ros = −θ_ld14`; đặt đúng yaw TF; kiểm tra bằng vật đặt trước/bên trái xe |
 | 7 | **Xe quay vòng tròn tại chỗ khi nhận lệnh Nav2** | Dấu yaw odom ngược với dấu motor (vòng phản hồi dương); scan/odom lệch nhau; LiDAR thấy thân xe; recovery `spin` lặp lại; PWM tối thiểu quá cao gây vọt lố | Test chiều quay (mục 2.2f); tăng `min_range`; xem log BT; giảm `MIN_DUTY` |
 | 8 | **Nav2 nhận goal, có `/plan`, nhưng xe đứng yên** (hoặc xe tự chạy mãi sau khi teleop) | Chuỗi `cmd_vel` đứt/khép vòng do thiếu remap `velocity_smoother`; lifecycle chưa active; collision monitor chặn | Thêm remap `('cmd_vel','cmd_vel_nav')`; `ros2 lifecycle get`; xem `/collision_monitor_state` |
-| 9 | **AMCL không định vị được / không có `map→odom` / bản đồ không hiện** | Sai đường dẫn map (mặc định `my_map.yaml` không tồn tại); chưa đặt `2D Pose Estimate`; QoS map sai; chạy cùng SLAM | Truyền `map:=` tuyệt đối; đặt initial pose; RViz Durability = Transient Local |
+| 9 | **AMCL không định vị được / không có `map→odom` / bản đồ không hiện** | Sai đường dẫn map (chưa lưu `~/ros2_ws/maps/my_map.yaml` hoặc workspace ở chỗ khác); chưa đặt `2D Pose Estimate`; QoS map sai; chạy cùng SLAM | Truyền `map:=` tuyệt đối; đặt initial pose; RViz Durability = Transient Local |
 | 10 | **`Failed to make progress` / goal bị abort, xe đi giật cục, lắc lư** | `min_x_velocity_threshold: 0.25` quá lớn; vùng chết motor; tốc độ thật < mong muốn; costmap chặn đường hẹp | Đặt `min_x_velocity_threshold: 0.001`; hiệu chỉnh `MIN_DUTY_*`; giảm `inflation_radius` |
 
 ### 3.2 Phân tích chi tiết và cách khắc phục triệt để
@@ -842,7 +845,8 @@ date +%s.%N
    Dòng `System clock synchronized: yes` là đạt.
 3. Nới tolerance cho phù hợp mạng WiFi: `slam_params.yaml: transform_timeout: 0.5` (đã có);
    `controller_server → FollowPath.transform_tolerance: 0.2 → 0.5`; `behavior_server.transform_tolerance: 0.1 → 0.5`.
-4. Phương án dự phòng: dùng `scan_restamper` (đổi topic firmware thành `"scan_raw"`). Node này đóng dấu lại scan bằng đồng hồ PC
+4. Phương án dự phòng: dùng `scan_restamper`. Đổi topic firmware thành `"scan_raw"`, rồi chạy launch với
+   `use_scan_restamper:=true` (ví dụ `ros2 launch wheel_odometry mapping.launch.py use_scan_restamper:=true`). Node này đóng dấu lại scan bằng đồng hồ PC
    (`now − 0.05 s`) và **bỏ scan cũ hơn 0.3 s**. Nhược điểm: che giấu độ trễ thật; khi xe quay nhanh, bản đồ có thể nhòe.
 
 #### Lỗi 4: `Message Filter dropping message` / `frame does not exist`
@@ -924,8 +928,9 @@ ros2 topic echo /cmd_vel_nav
 ```
 
 Nếu `/velocity_smoother` **subscribe `/cmd_vel`** (thay vì `/cmd_vel_nav`), thì `/cmd_vel_nav` không ai nghe (xe đứng yên),
-và `/cmd_vel` bị nuôi vòng (xe có thể chạy mãi sau khi teleop). **Sửa:** thêm `remappings=[('cmd_vel', 'cmd_vel_nav')]`
-cho node `velocity_smoother` trong `navigation.launch.py` (mục 2.4a), rồi chạy lại launch.
+và `/cmd_vel` bị nuôi vòng (xe có thể chạy mãi sau khi teleop). **Sửa:** `navigation.launch.py` trong repo đã có
+`remappings=[('cmd_vel', 'cmd_vel_nav')]` cho `velocity_smoother`. Nếu vẫn thấy lỗi, hãy build lại
+(`colcon build --packages-select wheel_odometry`) và kiểm tra bạn đang chạy đúng file launch đã cài.
 
 Các nguyên nhân khác:
 - Lifecycle chưa `active` (lệnh `ros2 lifecycle get` ở mục 2.4b), thường do lỗi tham số. Xem log đỏ đầu tiên của launch.
@@ -942,8 +947,9 @@ Các nguyên nhân khác:
 
 #### Lỗi 9: AMCL không định vị / không có `map → odom` / bản đồ không hiện
 
-- `navigation.launch.py` mặc định tìm `share/wheel_odometry/maps/my_map.yaml`, **file này không tồn tại**. Log `map_server` sẽ báo
-  `Failed processing YAML file`. → Luôn chạy với `map:=$HOME/ros2_ws/maps/my_map.yaml`.
+- Không tìm thấy file map: log `map_server` báo `Failed processing YAML file`. `navigation.launch.py` mặc định đọc
+  `~/ros2_ws/maps/my_map.yaml`. Nếu workspace của bạn ở chỗ khác, hoặc bạn đặt tên map khác, hãy truyền đường dẫn tuyệt đối
+  `map:=/đường/dẫn/tới/map.yaml`.
 - RViz không hiện map: topic `/map` dùng QoS `transient_local`. Trong display Map đặt **Durability Policy = Transient Local**.
 - Chưa có `map → odom`: AMCL chỉ publish sau khi nhận **initial pose** (`set_initial_pose` mặc định `false`). Dùng `2D Pose Estimate`.
 - Đang chạy cả `slam_toolbox` và `amcl` → hai nguồn `map → odom`, robot nhảy liên tục. Tắt SLAM khi chạy Nav2.
@@ -976,7 +982,7 @@ Các nguyên nhân khác:
 | ☐ | Vật trước xe → +X, vật bên trái → +Y trong RViz | mục 3.2 lỗi 6 |
 | ☐ | Cây TF liền mạch, mỗi frame một cha | `ros2 run tf2_tools view_frames` |
 | ☐ | Chỉ một nguồn `map→odom` (SLAM **hoặc** AMCL) | `ros2 run tf2_ros tf2_monitor map odom` |
-| ☐ | Truyền `map:=` tuyệt đối khi chạy Nav2 | `navigation.launch.py map:=$HOME/ros2_ws/maps/my_map.yaml` |
+| ☐ | File map tồn tại (hoặc truyền `map:=` tuyệt đối) | `ls ~/ros2_ws/maps/my_map.yaml` |
 | ☐ | `velocity_smoother` nghe `/cmd_vel_nav` | `ros2 node info /velocity_smoother` |
 | ☐ | Đặt `2D Pose Estimate`, scan khớp tường | RViz |
 

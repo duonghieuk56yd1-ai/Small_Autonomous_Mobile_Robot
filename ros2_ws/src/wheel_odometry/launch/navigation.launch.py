@@ -11,9 +11,12 @@ def generate_launch_description():
     pkg = get_package_share_directory('wheel_odometry')
     nav2_config = os.path.join(pkg, 'config', 'nav2_params.yaml')
 
+    # Maps live in the workspace (ros2_ws/maps), not in the installed package
+    # share directory, so default to where map_saver_cli writes them.
     map_arg = DeclareLaunchArgument(
         'map',
-        default_value=os.path.join(pkg, 'maps', 'my_map.yaml'),
+        default_value=os.path.join(
+            os.path.expanduser('~'), 'ros2_ws', 'maps', 'my_map.yaml'),
         description='Full path to the map yaml file'
     )
 
@@ -91,6 +94,12 @@ def generate_launch_description():
             name='velocity_smoother',
             output='screen',
             parameters=[nav2_config],
+            # controller_server -> cmd_vel_nav -> velocity_smoother
+            #   -> cmd_vel_smoothed -> collision_monitor -> cmd_vel -> ESP32
+            # Without this remap the smoother listens on cmd_vel (the
+            # collision_monitor output), so controller commands are lost and
+            # cmd_vel feeds back into itself.
+            remappings=[('cmd_vel', 'cmd_vel_nav')],
         ),
 
         Node(
